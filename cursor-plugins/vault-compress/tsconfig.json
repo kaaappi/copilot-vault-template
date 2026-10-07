@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "types": ["bun-types-no-globals"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["hooks/**/*.ts"]
+}

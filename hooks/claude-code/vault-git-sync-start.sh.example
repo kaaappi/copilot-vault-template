@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# SessionStart hook: pull the vault repo before the AI reads anything from
+# it, and get off a stale vault-heal/vault-learn review branch back onto the
+# default branch when it's safe to.
+#
+# Never auto-merges or auto-deletes branches — /lint-obsidian and /learn own
+# that decision, this only fetches, fast-forwards, and switches when the
+# working tree is clean.
+set -uo pipefail
+
+VAULT_REPO="${VAULT_GIT_ROOT:?Set VAULT_GIT_ROOT to the git repo root containing Copilot-Vault}"
+DEFAULT_BRANCH="${VAULT_GIT_DEFAULT_BRANCH:-main}"
+STALE_DAYS="${VAULT_GIT_STALE_BRANCH_DAYS:-7}"
+
+cd "$VAULT_REPO" || exit 0
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
+
+git fetch --quiet origin 2>/dev/null
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+DIRTY=$(git status --porcelain)
+CONTEXT=""
+
+# On an unmerged review branch with a clean tree — safe to hop back to default.
+if [[ "$CURRENT_BRANCH" =~ ^(vault-heal|vault-learn)/ ]] && [ -z "$DIRTY" ]; then
+  if git checkout "$DEFAULT_BRANCH" --quiet 2>/dev/null; then
+    CONTEXT="Switched from unmerged branch '$CURRENT_BRANCH' back to '$DEFAULT_BRANCH' (tree was clean). '$CURRENT_BRANCH' still exists untouched and needs human review before merging."
+    CURRENT_BRANCH="$DEFAULT_BRANCH"
+  fi
+fi
+
+# Fast-forward only, and only on the default branch — never rewrite a side
+# branch's history out from under an in-progress review.
+if [ "$CURRENT_BRANCH" = "$DEFAULT_BRANCH" ]; then
+  PULL_OUT=$(git pull --ff-only origin "$DEFAULT_BRANCH" 2>&1)
+  if [ $? -ne 0 ]; then
+    CONTEXT="${CONTEXT}${CONTEXT:+ }Vault pull failed (not fast-forward, or offline) — vault content may be stale: ${PULL_OUT}"
+  fi
+fi
+
+# Surface old unmerged review branches without touching them.
+CUTOFF=$(( $(date +%s) - STALE_DAYS * 86400 ))
+STALE_BRANCHES=$(git for-each-ref --format='%(refname:short) %(committerdate:unix)' refs/heads/ 2>/dev/null | \
+  awk -v cutoff="$CUTOFF" '$2 < cutoff && ($1 ~ /^vault-heal\// || $1 ~ /^vault-learn\//) {print $1}')
+if [ -n "$STALE_BRANCHES" ]; then
+  LIST=$(echo "$STALE_BRANCHES" | tr '\n' ' ')
+  CONTEXT="${CONTEXT}${CONTEXT:+ }Unmerged review branches older than ${STALE_DAYS}d still waiting: ${LIST}. Consider reviewing and merging or deleting them."
+fi
+
+if [ -n "$CONTEXT" ]; then
+  jq -n --arg ctx "$CONTEXT" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
+fi
+exit 0

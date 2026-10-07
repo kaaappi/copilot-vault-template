@@ -1,0 +1,8 @@
+.DS_Store
+node_modules/
+vault-search-mcp/vectors.json
+vault-search-mcp/eval.mjs
+vault-search-mcp/reindex.log
+.mcp.json
+.obsidian/
+__pycache__/

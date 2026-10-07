@@ -1,0 +1,39 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "VAULT_GIT_ROOT=<vault-git-root> bash ~/.claude/hooks/vault-git-sync-start.sh",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "VAULT_DIR=<vault-path> bash ~/.claude/hooks/vault-digest-gate.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "VAULT_DIR=<vault-path> python3 ~/.claude/hooks/vault-compress-stop.py",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "VAULT_GIT_ROOT=<vault-git-root> bash ~/.claude/hooks/vault-git-sync-stop.sh",
+            "async": true,
+            "asyncRewake": true
+          }
+        ]
+      }
+    ]
+  }
+}

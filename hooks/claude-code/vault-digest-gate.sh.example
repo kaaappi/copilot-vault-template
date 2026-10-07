@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# SessionStart hook: nudge to run /digest once enough undigested session-diary
+# entries have piled up. Gate is count-based (not time-based) — re-arms only
+# when the undigested count grows past what it was at the last nudge, so it
+# can't spam every session once the threshold is crossed.
+set -euo pipefail
+
+VAULT="${VAULT_DIR:?Set VAULT_DIR to your Copilot-Vault path}"
+DIARY_DIR="$VAULT/session-diary"
+if [ ! -d "$DIARY_DIR" ]; then
+  # numbered vault layout
+  DIARY_DIR="$VAULT/06-session-diary"
+fi
+STATE_DIR="$HOME/.claude/hooks/state"
+STATE_FILE="$STATE_DIR/vault-digest-gate.json"
+mkdir -p "$STATE_DIR"
+
+THRESHOLD="${VAULT_DIGEST_GATE_THRESHOLD:-3}"
+
+if [ ! -d "$DIARY_DIR" ]; then
+  exit 0
+fi
+
+# Dated session logs only (YYYY-MM-DD-*.md) — skips _retrospectives/ (corrections-log,
+# new-things-registry: running registries, not session entries) and any non-dated
+# file such as a folder README.
+UNDIGESTED_COUNT=0
+while IFS= read -r -d '' f; do
+  if ! grep -q '^digested:' "$f" 2>/dev/null; then
+    UNDIGESTED_COUNT=$((UNDIGESTED_COUNT + 1))
+  fi
+done < <(find "$DIARY_DIR" -type f -name "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md" -not -path "*/_retrospectives/*" -print0 2>/dev/null)
+
+if [ ! -f "$STATE_FILE" ]; then
+  jq -n --arg c "0" '{lastNudgedCount: ($c|tonumber)}' > "$STATE_FILE"
+fi
+
+LAST_NUDGED_COUNT=$(jq -r '.lastNudgedCount // 0' "$STATE_FILE")
+
+# /digest ran since the last nudge — re-arm from the new, lower baseline.
+if [ "$UNDIGESTED_COUNT" -lt "$LAST_NUDGED_COUNT" ]; then
+  jq -n --arg c "$UNDIGESTED_COUNT" '{lastNudgedCount: ($c|tonumber)}' > "$STATE_FILE"
+  LAST_NUDGED_COUNT="$UNDIGESTED_COUNT"
+fi
+
+if [ "$UNDIGESTED_COUNT" -lt "$THRESHOLD" ] || [ "$UNDIGESTED_COUNT" -le "$LAST_NUDGED_COUNT" ]; then
+  exit 0
+fi
+
+jq -n --arg c "$UNDIGESTED_COUNT" '{lastNudgedCount: ($c|tonumber)}' > "$STATE_FILE"
+
+CONTEXT="${UNDIGESTED_COUNT} entries in the session diary haven't been run through /digest yet (no 'digested:' in frontmatter). Suggest the user run /digest — it analyzes patterns and proposes new/expanded nodes, but writes nothing without confirmation. Don't run it yourself without confirmation."
+
+jq -n --arg ctx "$CONTEXT" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
+exit 0

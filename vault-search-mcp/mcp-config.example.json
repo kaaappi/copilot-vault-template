@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "vault-search": {
+      "command": "node",
+      "args": ["<path-to>/vault-search-mcp/server.mjs"],
+      "env": {
+        "VAULT_DIR": "<path-to-your-vault>",
+        "GOOGLE_API_KEY": "<your-gemini-api-key>"
+      }
+    }
+  }
+}

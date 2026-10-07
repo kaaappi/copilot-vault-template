@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Claude Code Stop hook: periodically bring up /compress.
+
+Counts one turn per natural Stop (per session) and fires once both the turn
+and minute thresholds are met and the transcript has advanced. Emits
+hookSpecificOutput.additionalContext, which Claude Code shows as
+"Stop hook feedback" (not a hook error) and which is covered by the
+stop_hook_active / continuation-cap loop protections. Fails open.
+
+By default the hook only asks the agent to *suggest* /compress. Set
+VAULT_COMPRESS_MODE=run to have the agent run it without asking — it writes
+one diary file (plus the registries and the project CLAUDE.md Open Threads)
+inside the vault and nothing else.
+
+Env:
+  VAULT_DIR                          path to the vault (used in the message)
+  VAULT_COMPRESS_MODE                suggest (default) | run
+  VAULT_COMPRESS_MIN_TURNS           default 6
+  VAULT_COMPRESS_MIN_MINUTES         default 45
+  VAULT_COMPRESS_TRIAL_MODE          1/true to use the trial thresholds for a window
+  VAULT_COMPRESS_TRIAL_MIN_TURNS     default 3
+  VAULT_COMPRESS_TRIAL_MIN_MINUTES   default 10
+  VAULT_COMPRESS_TRIAL_DURATION_MINUTES  default 1440
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+STATE_PATH = Path.home() / ".claude" / "hooks" / "state" / "vault-compress.json"
+SESSION_TTL_MS = 14 * 24 * 60 * 60_000
+
+DEFAULT_MIN_TURNS = 6
+DEFAULT_MIN_MINUTES = 45
+TRIAL_DEFAULT_MIN_TURNS = 3
+TRIAL_DEFAULT_MIN_MINUTES = 10
+TRIAL_DEFAULT_DURATION_MINUTES = 24 * 60
+
+# Text the agent's reply contains right after it ran /compress.
+COMPRESSED_MARKERS = (
+    "No vault diary updates",
+    "Session Log —",
+    "session-diary/20",
+)
+
+
+def followup_message(turns: int, minutes: int) -> str:
+    vault = os.environ.get("VAULT_DIR", "").rstrip("/") or "<VAULT_DIR not set>"
+    if (os.environ.get("VAULT_COMPRESS_MODE") or "suggest").strip().lower() == "run":
+        return (
+            "Run the `obsidian-vault` skill and execute `/compress` for this session now: "
+            "write the session diary entry (Summary / Work Items / Decisions / What Was New / "
+            "Retrospective / Open Threads), append the corrections and new-things registries "
+            "when applicable, and update the project `CLAUDE.md` Open Threads. "
+            f"Vault root: `{vault}`. Capture user preferences, corrections, and durable patterns "
+            "the user stated explicitly; exclude secrets and one-off noise. If the session has no "
+            "meaningful diary content yet, respond exactly: No vault diary updates."
+        )
+    return (
+        f"{turns} turns and ~{minutes} min since the last /compress in this session. Suggest the user "
+        "run /compress (obsidian-vault skill) to write the session diary — don't run it "
+        f"yourself without confirmation. Vault root: `{vault}`."
+    )
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name) or default)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def env_bool(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def load_state() -> dict[str, Any]:
+    fallback: dict[str, Any] = {"version": 1, "sessions": {}}
+    try:
+        data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return fallback
+    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("sessions"), dict):
+        return fallback
+    return data
+
+
+def save_state(state: dict[str, Any], now: int) -> None:
+    sessions = state["sessions"]
+    for key in [k for k, v in sessions.items() if now - int(v.get("lastSeenAtMs") or 0) > SESSION_TTL_MS]:
+        del sessions[key]
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STATE_PATH.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+
+def transcript_mtime_ms(path: str | None) -> float | None:
+    if not path:
+        return None
+    try:
+        return Path(path).expanduser().stat().st_mtime * 1000
+    except OSError:
+        return None
+
+
+def main() -> int:
+    raw = sys.stdin.read()
+    if not raw.strip():
+        return 0
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return 0
+
+    # Already continuing because of a Stop hook — let the turn finish.
+    if payload.get("stop_hook_active") is True:
+        return 0
+
+    now = int(time.time() * 1000)
+    all_state = load_state()
+    state = all_state["sessions"].setdefault(
+        payload.get("session_id") or "default",
+        {"lastRunAtMs": 0, "turnsSinceLastRun": 0, "lastTranscriptMtimeMs": None, "trialStartedAtMs": None},
+    )
+    state["lastSeenAtMs"] = now
+    t_mtime = transcript_mtime_ms(payload.get("transcript_path"))
+
+    last_message = payload.get("last_assistant_message")
+    if isinstance(last_message, str) and any(m in last_message for m in COMPRESSED_MARKERS):
+        state.update(lastRunAtMs=now, turnsSinceLastRun=0, lastTranscriptMtimeMs=t_mtime)
+        save_state(all_state, now)
+        return 0
+
+    turns = int(state.get("turnsSinceLastRun") or 0) + 1
+
+    trial_enabled = env_bool("VAULT_COMPRESS_TRIAL_MODE") or env_bool("VAULT_COMPRESS_TRIAL")
+    if trial_enabled and state.get("trialStartedAtMs") is None:
+        state["trialStartedAtMs"] = now
+    trial_minutes = env_int("VAULT_COMPRESS_TRIAL_DURATION_MINUTES", TRIAL_DEFAULT_DURATION_MINUTES)
+    in_trial = trial_enabled and now - int(state.get("trialStartedAtMs") or now) < trial_minutes * 60_000
+
+    if in_trial:
+        min_turns = env_int("VAULT_COMPRESS_TRIAL_MIN_TURNS", TRIAL_DEFAULT_MIN_TURNS)
+        min_minutes = env_int("VAULT_COMPRESS_TRIAL_MIN_MINUTES", TRIAL_DEFAULT_MIN_MINUTES)
+    else:
+        min_turns = env_int("VAULT_COMPRESS_MIN_TURNS", DEFAULT_MIN_TURNS)
+        min_minutes = env_int("VAULT_COMPRESS_MIN_MINUTES", DEFAULT_MIN_MINUTES)
+
+    # First Stop of a session starts the clock; the gate needs both turns and minutes.
+    if not state.get("lastRunAtMs"):
+        state["lastRunAtMs"] = now
+    minutes_since = (now - int(state["lastRunAtMs"])) // 60_000
+    last_t = state.get("lastTranscriptMtimeMs")
+    transcript_advanced = t_mtime is not None and (last_t is None or t_mtime > float(last_t))
+
+    if turns >= min_turns and minutes_since >= min_minutes and transcript_advanced:
+        state.update(lastRunAtMs=now, turnsSinceLastRun=0, lastTranscriptMtimeMs=t_mtime)
+        save_state(all_state, now)
+        message = followup_message(turns, minutes_since)
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": message}}))
+        return 0
+
+    state["turnsSinceLastRun"] = turns
+    save_state(all_state, now)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:  # fail open — never break the session
+        print(f"[vault-compress-stop] failed: {exc}", file=sys.stderr)
+        raise SystemExit(0)

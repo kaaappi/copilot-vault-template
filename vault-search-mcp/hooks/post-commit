@@ -1,0 +1,36 @@
+#!/bin/sh
+# Auto-reindex vault after each git commit.
+# Install: cp this file to <vault-repo>/.git/hooks/post-commit && chmod +x .git/hooks/post-commit
+#
+# Expects vault-search-mcp/ at the repo root (the vault itself is the repo).
+# VAULT_DIR defaults to the repo root. GOOGLE_API_KEY comes from the environment
+# or, failing that, from the vault-search entry in <vault>/.mcp.json — git hooks
+# run without your shell profile (e.g. from Obsidian Git), so the fallback matters.
+# Output goes to vault-search-mcp/reindex.log instead of vanishing silently.
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+SCRIPT_DIR="$REPO_ROOT/vault-search-mcp"
+LOG="$SCRIPT_DIR/reindex.log"
+
+[ -f "$SCRIPT_DIR/index-vault.mjs" ] || exit 0
+
+VAULT_DIR="${VAULT_DIR:-$REPO_ROOT}"
+
+if [ -z "$GOOGLE_API_KEY" ] && [ -f "$REPO_ROOT/.mcp.json" ]; then
+  GOOGLE_API_KEY="$(node -e '
+    const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf-8"));
+    process.stdout.write(c?.mcpServers?.["vault-search"]?.env?.GOOGLE_API_KEY ?? "");
+  ' "$REPO_ROOT/.mcp.json" 2>/dev/null)"
+fi
+
+if [ -z "$GOOGLE_API_KEY" ]; then
+  echo "[vault-search] reindex skipped: no GOOGLE_API_KEY in env or .mcp.json" | tee -a "$LOG" >&2
+  exit 0
+fi
+
+echo "[vault-search] reindexing in background (log: vault-search-mcp/reindex.log)..."
+(
+  cd "$SCRIPT_DIR" &&
+  echo "--- $(date -u +%Y-%m-%dT%H:%M:%SZ)" &&
+  VAULT_DIR="$VAULT_DIR" GOOGLE_API_KEY="$GOOGLE_API_KEY" node index-vault.mjs
+) >> "$LOG" 2>&1 &

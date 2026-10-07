@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Stop hook: commit and push any vault changes made this turn, so the repo
+# stays synced even when nobody has the Obsidian app open. Runs async — never
+# blocks the session. Fast no-op when nothing changed.
+#
+# Commits + pushes whatever branch is currently checked out — including a
+# vault-heal/vault-learn review branch, which is fine: this only syncs it to
+# the remote, it never merges it (that stays a human decision).
+#
+# Coexistence with Obsidian Git: if Obsidian is open, its Git plugin likely
+# already owns auto-commit/push on its own timer (see README/SKILL.md "Git
+# sync hooks"). Committing locally here is always safe either way, but this
+# skips the PUSH when Obsidian looks like it's running, so two independent
+# processes don't race pushing the same branch. Best-effort process check —
+# adjust the process name below if it doesn't match your OS/setup.
+set -uo pipefail
+
+VAULT_REPO="${VAULT_GIT_ROOT:?Set VAULT_GIT_ROOT to the git repo root containing Copilot-Vault}"
+OBSIDIAN_PROCESS="${VAULT_GIT_OBSIDIAN_PROCESS_NAME:-Obsidian}"
+
+cd "$VAULT_REPO" || exit 0
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
+
+# Nothing changed — fast exit, no further git calls.
+if [ -z "$(git status --porcelain)" ]; then
+  exit 0
+fi
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+
+git add -A
+git commit --quiet -m "vault sync: automated commit ($(date -u +%Y-%m-%dT%H:%M:%SZ))" >/dev/null 2>&1
+
+# No remote configured yet — this is the expected state until the "set up the
+# remote" setup step runs (see README/AGENTS.md). Commit succeeded above; just
+# skip pushing rather than printing a misleading conflict message.
+if ! git remote get-url origin >/dev/null 2>&1; then
+  exit 0
+fi
+
+# Obsidian's own Git plugin likely owns pushing while it's running — don't race it.
+if command -v pgrep >/dev/null 2>&1 && pgrep -x "$OBSIDIAN_PROCESS" >/dev/null 2>&1; then
+  exit 0
+fi
+
+PUSH_OK=1
+if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  git push --quiet origin "$CURRENT_BRANCH" >/dev/null 2>&1 || PUSH_OK=0
+else
+  git push --quiet -u origin "$CURRENT_BRANCH" >/dev/null 2>&1 || PUSH_OK=0
+fi
+
+if [ "$PUSH_OK" = "0" ]; then
+  echo "Vault auto-commit succeeded but the push to origin/${CURRENT_BRANCH} failed — the remote likely has commits this session never pulled. Run 'git pull' in the vault repo, resolve any conflicts (see /vault-resolve-conflict), then push manually."
+  exit 2
+fi
+
+exit 0

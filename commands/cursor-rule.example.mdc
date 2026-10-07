@@ -1,0 +1,37 @@
+---
+description: Reference to personal knowledge base
+globs:
+alwaysApply: true
+---
+
+# Knowledge Base
+
+Your knowledge base (Obsidian vault) is available via the `vault-search` MCP server.
+
+## MCP Tools
+
+- `search(query)` — semantic search, returns top 3 results
+- `get(path)` — read a vault file by relative path
+
+## When to Use
+
+- **BEFORE writing or modifying code**: search for relevant coding patterns
+- **BEFORE writing PR descriptions or messages**: search for tone/style guide
+- **BEFORE creating new files**: search for naming conventions
+
+## Vault Commands — use proactively
+
+| Command | When to trigger | What it does |
+|---------|----------------|-------------|
+| `/compress` | End of session | Session diary + corrections + project CLAUDE.md |
+| `/catchup` | Start of session | Last session's Open Threads + project context |
+| `/ingest` | Source added to `sources/` | Process source → multi-page vault update |
+| `/lint-obsidian` | Periodically | Full audit + auto-fix on git branch |
+| `/learn` | On demand | Find gaps → research → propose (human approves) |
+| `/digest` | On demand | Meta-analysis of recent diary entries |
+
+Trigger proactively: offer `/compress` at session end, suggest `/ingest` when user mentions useful resources.
+
+## Fallback (if MCP unavailable)
+
+Read files directly at the vault path. Start with `moc/Index.md`.

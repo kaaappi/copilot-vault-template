@@ -1,0 +1,23 @@
+{
+  "name": "vault-compress",
+  "displayName": "Vault Compress",
+  "version": "1.0.0",
+  "description": "Periodically triggers /compress via obsidian-vault to write session diary entries from chat transcripts.",
+  "license": "MIT",
+  "keywords": [
+    "obsidian",
+    "vault",
+    "compress",
+    "session-diary",
+    "hooks",
+    "transcripts"
+  ],
+  "category": "developer-tools",
+  "tags": [
+    "automation",
+    "memory",
+    "transcripts"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json"
+}

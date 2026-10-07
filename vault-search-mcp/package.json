@@ -1,0 +1,16 @@
+{
+  "name": "vault-search-mcp",
+  "version": "1.0.0",
+  "description": "Semantic search MCP server for Obsidian vault using Gemini embeddings",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "index": "node index-vault.mjs",
+    "eval": "node eval.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@google/genai": "^1.0.0"
+  }
+}

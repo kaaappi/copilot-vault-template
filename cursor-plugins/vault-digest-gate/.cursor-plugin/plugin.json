@@ -1,0 +1,22 @@
+{
+  "name": "vault-digest-gate",
+  "displayName": "Vault Digest Gate",
+  "version": "1.0.0",
+  "description": "At session start, checks how many session-diary entries are still undigested and raises /digest once a threshold is crossed.",
+  "license": "MIT",
+  "keywords": [
+    "obsidian",
+    "vault",
+    "digest",
+    "session-diary",
+    "hooks"
+  ],
+  "category": "developer-tools",
+  "tags": [
+    "automation",
+    "memory",
+    "review-gate"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json"
+}
